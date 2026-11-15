@@ -22,7 +22,7 @@ function roomMembers(room) {
 function broadcastState() {
   const rooms = ROOMS.map(name => ({
     name,
-    users: roomMembers(name).map(p => ({ id: p.id, name: p.name })),
+    users: roomMembers(name).map(p => ({ id: p.id, name: p.name, mic: p.mic, spk: p.spk })),
   }));
   for (const p of peers.values()) send(p.ws, { type: 'state', rooms });
 }
@@ -35,7 +35,7 @@ function leaveRoom(p) {
 }
 
 wss.on('connection', ws => {
-  const p = { id: nextId++, name: 'ไม่ระบุชื่อ', room: null, ws, alive: true };
+  const p = { id: nextId++, name: 'ไม่ระบุชื่อ', room: null, ws, alive: true, mic: false, spk: false };
   peers.set(p.id, p);
   ws.on('pong', () => (p.alive = true));
 
@@ -47,6 +47,12 @@ wss.on('connection', ws => {
       case 'hello':
         p.name = String(m.name || 'ไม่ระบุชื่อ').slice(0, 24);
         send(ws, { type: 'welcome', id: p.id });
+        broadcastState();
+        break;
+
+      case 'status': // สถานะปิดไมค์ / ปิดลำโพง ไว้แสดงไอคอนให้คนอื่นเห็น
+        p.mic = !!m.mic;
+        p.spk = !!m.spk;
         broadcastState();
         break;
 
