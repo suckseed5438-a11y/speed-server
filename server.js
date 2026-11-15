@@ -99,11 +99,3 @@ setInterval(() => {
 }, 15000);
 
 console.log(`เซิร์ฟเวอร์พร้อมที่พอร์ต ${PORT} | ห้อง: ${ROOMS.join(', ')}`);
-
-{
-  "name": "voicechat-server",
-  "version": "1.0.0",
-  "main": "server.js",
-  "scripts": { "start": "node server.js" },
-  "dependencies": { "ws": "^8.18.0" }
-}
