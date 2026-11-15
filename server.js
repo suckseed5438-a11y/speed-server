@@ -1,0 +1,109 @@
+// เซิร์ฟเวอร์สำหรับจัดห้อง + ส่งสัญญาณ (signaling) ให้ WebRTC
+// เสียงจริงๆ ไม่ผ่านเซิร์ฟเวอร์นี้ ส่งตรงระหว่างเพื่อนกับเพื่อน
+const { WebSocketServer } = require('ws');
+
+const PORT = process.env.PORT || 3000;
+const ROOMS = ['ห้องรวม', 'ห้องเกม', 'ห้องพักผ่อน']; // แก้ชื่อ/จำนวนห้องได้ตรงนี้
+
+const http = require('http');
+// HTTP ธรรมดาไว้ให้บริการโฮสติ้งตรวจว่าเซิร์ฟเวอร์ยังทำงานอยู่ (health check)
+const httpServer = http.createServer((_req, res) => { res.writeHead(200); res.end('ok'); });
+const wss = new WebSocketServer({ server: httpServer });
+httpServer.listen(PORT);
+const peers = new Map(); // id -> { id, name, room, ws, alive }
+let nextId = 1;
+
+const send = (ws, obj) => ws.readyState === 1 && ws.send(JSON.stringify(obj));
+
+function roomMembers(room) {
+  return [...peers.values()].filter(p => p.room === room);
+}
+
+function broadcastState() {
+  const rooms = ROOMS.map(name => ({
+    name,
+    users: roomMembers(name).map(p => ({ id: p.id, name: p.name })),
+  }));
+  for (const p of peers.values()) send(p.ws, { type: 'state', rooms });
+}
+
+function leaveRoom(p) {
+  if (!p.room) return;
+  const old = p.room;
+  p.room = null;
+  for (const m of roomMembers(old)) send(m.ws, { type: 'peer-left', id: p.id });
+}
+
+wss.on('connection', ws => {
+  const p = { id: nextId++, name: 'ไม่ระบุชื่อ', room: null, ws, alive: true };
+  peers.set(p.id, p);
+  ws.on('pong', () => (p.alive = true));
+
+  ws.on('message', raw => {
+    let m;
+    try { m = JSON.parse(raw); } catch { return; }
+
+    switch (m.type) {
+      case 'hello':
+        p.name = String(m.name || 'ไม่ระบุชื่อ').slice(0, 24);
+        send(ws, { type: 'welcome', id: p.id });
+        broadcastState();
+        break;
+
+      case 'join': {
+        if (!ROOMS.includes(m.room)) return;
+        leaveRoom(p);
+        const existing = roomMembers(m.room).map(x => x.id);
+        p.room = m.room;
+        // คนใหม่เป็นฝ่ายส่ง offer ไปหาคนที่อยู่ในห้องแล้ว
+        send(ws, { type: 'joined', room: m.room, peers: existing });
+        broadcastState();
+        break;
+      }
+
+      case 'leave':
+        leaveRoom(p);
+        broadcastState();
+        break;
+
+      case 'signal': {
+        const target = peers.get(m.to);
+        if (target && p.room && target.room === p.room) {
+          send(target.ws, { type: 'signal', from: p.id, data: m.data });
+        }
+        break;
+      }
+
+      case 'chat':
+        if (!p.room) return;
+        const text = String(m.text || '').slice(0, 500);
+        for (const x of roomMembers(p.room)) send(x.ws, { type: 'chat', from: p.name, text });
+        break;
+    }
+  });
+
+  ws.on('close', () => {
+    leaveRoom(p);
+    peers.delete(p.id);
+    broadcastState();
+  });
+});
+
+// ตัดคนที่หลุดไปแล้วโดยไม่ได้ปิดการเชื่อมต่อ
+setInterval(() => {
+  for (const p of peers.values()) {
+    if (!p.alive) { p.ws.terminate(); continue; }
+    p.alive = false;
+    p.ws.ping();
+  }
+}, 15000);
+
+console.log(`เซิร์ฟเวอร์พร้อมที่พอร์ต ${PORT} | ห้อง: ${ROOMS.join(', ')}`);
+
+{
+  "name": "voicechat-server",
+  "version": "1.0.0",
+  "main": "server.js",
+  "scripts": { "start": "node server.js" },
+  "dependencies": { "ws": "^8.18.0" }
+}
