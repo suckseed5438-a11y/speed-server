@@ -22,7 +22,7 @@ function roomMembers(room) {
 function broadcastState() {
   const rooms = ROOMS.map(name => ({
     name,
-    users: roomMembers(name).map(p => ({ id: p.id, name: p.name, mic: p.mic, spk: p.spk })),
+    users: roomMembers(name).map(p => ({ id: p.id, name: p.name, mic: p.mic, spk: p.spk, sharing: !!p.sharing })),
   }));
   for (const p of peers.values()) send(p.ws, { type: 'state', rooms });
 }
@@ -31,6 +31,7 @@ function leaveRoom(p) {
   if (!p.room) return;
   const old = p.room;
   p.room = null;
+  p.sharing = false; // ออกจากห้อง = หยุดแชร์จอ
   for (const m of roomMembers(old)) send(m.ws, { type: 'peer-left', id: p.id });
 }
 
@@ -53,6 +54,8 @@ wss.on('connection', ws => {
       case 'status': // สถานะปิดไมค์ / ปิดลำโพง ไว้แสดงไอคอนให้คนอื่นเห็น
         p.mic = !!m.mic;
         p.spk = !!m.spk;
+        // แชร์จอ: client เก่าไม่ส่งฟิลด์นี้มา ก็ไม่แตะค่าเดิม (เข้ากันได้ย้อนหลัง)
+        if (typeof m.sharing === 'boolean') p.sharing = m.sharing && !!p.room;
         broadcastState();
         break;
 
@@ -72,7 +75,7 @@ wss.on('connection', ws => {
         broadcastState();
         break;
 
-      case 'signal': {
+      case 'signal': { // ส่งต่อข้อความอะไรก็ได้ (sdp / candidate / watch / unwatch) ให้คนในห้องเดียวกัน
         const target = peers.get(m.to);
         if (target && p.room && target.room === p.room) {
           send(target.ws, { type: 'signal', from: p.id, data: m.data });
